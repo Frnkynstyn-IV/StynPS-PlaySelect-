@@ -73,14 +73,35 @@ const AXES: [(&str, &str, u16); 6] = [
     ("Right Stick Y", "ABS_RY", ABS_RY),
 ];
 
-/// Touchpad and lightbar outline fractions tailored to standard DualSense layout.
+/// Helper function to handle the third-party controller swap natively
+fn get_btn_code(name: &str, swap_square_triangle: bool) -> u16 {
+    match name {
+        "BTN_NORTH" => if swap_square_triangle { 308 } else { 307 },
+        "BTN_WEST"  => if swap_square_triangle { 307 } else { 308 },
+        "BTN_SOUTH" => 304,
+        "BTN_EAST"  => 305,
+        "BTN_TL" => 310,
+        "BTN_TR" => 311,
+        "BTN_SELECT" => 314,
+        "BTN_START" => 315,
+        "BTN_MODE" => 316,
+        "BTN_THUMBL" => 317,
+        "BTN_THUMBR" => 318,
+        "ABS_HAT0Y_UP" => 17,
+        "ABS_HAT0Y_DOWN" => 17,
+        "ABS_HAT0X_LEFT" => 16,
+        "ABS_HAT0X_RIGHT" => 16,
+        _ => 0,
+    }
+}
+
 struct ControllerLayout {
     hw_top: f32,
     hw_bot: f32,
     y_top: f32,
     y_bot: f32,
-    corner: f32,   // horizontal radius of the bottom corners
-    corner_v: f32, // vertical radius of the bottom corners
+    corner: f32,
+    corner_v: f32,
 }
 
 impl Default for ControllerLayout {
@@ -202,7 +223,6 @@ fn paint_controller(ui: &mut egui::Ui, lb_color: Color32, lb_brightness: f32, is
     let img = egui::Image::from_bytes(img_uri, img_bytes).fit_to_exact_size(rect.size()).maintain_aspect_ratio(true);
     img.paint_at(ui, rect);
 
-    // --- Lightbar ---
     let k = (lb_brightness / 100.0).clamp(0.0, 1.0);
     let lb_c = Color32::from_rgb(
         (lb_color.r() as f32 * k) as u8,
@@ -693,6 +713,8 @@ pub struct App {
     rumble_warning_until: Option<Instant>,
     lightbar_warning_until: Option<Instant>,
 
+    swap_square_triangle: bool,
+
     prev_controller: bool,
     connected_rumble_seq: Option<u8>,
     connected_rumble_timer: Instant,
@@ -723,13 +745,18 @@ impl App {
 
         cc.egui_ctx.set_fonts(fonts);
 
-        // THIS LINE LOADS THE IMAGE DECODERS
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
         let theme = if let Some(storage) = cc.storage {
             eframe::get_value(storage, "theme").unwrap_or(Theme::MinimalDark)
         } else {
             Theme::MinimalDark
+        };
+
+        let swap_square_triangle = if let Some(storage) = cc.storage {
+            eframe::get_value(storage, "swap_square_triangle").unwrap_or(false)
+        } else {
+            false
         };
 
         let live = Arc::new(Mutex::new(Live::default()));
@@ -760,6 +787,7 @@ impl App {
             perm_msg: Arc::new(Mutex::new(None)),
             rumble_warning_until: None,
             lightbar_warning_until: None,
+            swap_square_triangle,
             prev_controller: false,
             connected_rumble_seq: None,
             connected_rumble_timer: Instant::now(),
@@ -1106,7 +1134,8 @@ impl App {
                 egui::ScrollArea::vertical().max_height(ui.available_height() - 20.0).show(ui, |ui| {
                     ui.label(RichText::new("Buttons").color(pal.sub).size(13.0));
                     ui.add_space(4.0);
-                    for (label, name, code) in BUTTONS {
+                    for (label, name, _) in BUTTONS {
+                        let code = get_btn_code(name, self.swap_square_triangle);
                         let hat = |axis: u16| live.axes.get(&axis).copied().unwrap_or(0);
                         let lit = match name {
                             "ABS_HAT0Y_UP" => hat(ABS_HAT0Y) < 0,
@@ -1640,6 +1669,16 @@ impl App {
             ui.add_space(10.0);
 
             card(ui, pal, |ui| {
+                ui.label(RichText::new("Hardware Fixes").size(18.0).family(FontFamily::Name("LuxuryTitle".into())));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Some third-party controllers use non-standard mappings.").color(pal.sub).size(13.0));
+                ui.add_space(8.0);
+                ui.checkbox(&mut self.swap_square_triangle, "Swap Square and Triangle buttons");
+            });
+
+            ui.add_space(10.0);
+
+            card(ui, pal, |ui| {
                 ui.label(RichText::new("Appearance").size(18.0).family(FontFamily::Name("LuxuryTitle".into())));
                 ui.horizontal(|ui| {
                     ui.label("Theme:");
@@ -1721,6 +1760,7 @@ impl App {
 impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "theme", &self.theme);
+        eframe::set_value(storage, "swap_square_triangle", &self.swap_square_triangle);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
